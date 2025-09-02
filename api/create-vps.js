@@ -23,7 +23,7 @@ function saveVpsUser(githubToken, remoteLink) {
 // Check if origin is allowed
 function checkOrigin(origin) {
   if (!origin) return false;
-  return ALLOWED_ORIGIN_PATTERN.test(origin) || origin.includes('localhost') || origin.includes('127.0.0.1');  // Thêm localhost tạm thời để test
+  return ALLOWED_ORIGIN_PATTERN.test(origin) || origin.includes('localhost') || origin.includes('127.0.0.1');
 }
 
 // Generate tmate.yml workflow content
@@ -54,7 +54,7 @@ jobs:
       with:
         token: ${githubToken}
 
-    - name: 🐍 Tạo file VPS info
+    - name: 📝 Tạo file VPS info
       run: |
         mkdir -Force links
         "VPS khởi tạo - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" | Out-File -FilePath "links/${vpsName}.txt" -Encoding UTF8
@@ -62,10 +62,10 @@ jobs:
     - name: 🖥️ Cài đặt và chạy TightVNC, noVNC, Cloudflared
       shell: pwsh
       run: |
-        Write-Host "📥 Installing TightVNC, noVNC, and Cloudflared..."
+        Write-Host "🔥 Installing TightVNC, noVNC, and Cloudflared..."
         
         try {
-          Write-Host "📥 Installing TightVNC..."
+          Write-Host "🔥 Installing TightVNC..."
           Invoke-WebRequest -Uri "https://www.tightvnc.com/download/2.8.63/tightvnc-2.8.63-gpl-setup-64bit.msi" -OutFile "tightvnc-setup.msi" -TimeoutSec 60
           Write-Host "✅ TightVNC downloaded"
           
@@ -75,7 +75,7 @@ jobs:
           Write-Host "🔧 Enabling loopback connections in TightVNC registry..."
           Set-ItemProperty -Path "HKLM:\\SOFTWARE\\TightVNC\\Server" -Name "AllowLoopback" -Value 1 -ErrorAction SilentlyContinue
           
-          Write-Host "🔍 Stopping any existing tvnserver processes..."
+          Write-Host "🔄 Stopping any existing tvnserver processes..."
           Stop-Process -Name "tvnserver" -Force -ErrorAction SilentlyContinue
           Stop-Service -Name "tvnserver" -Force -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 5
@@ -90,7 +90,7 @@ jobs:
           netsh advfirewall firewall add rule name="Allow noVNC 6080" dir=in action=allow protocol=TCP localport=6080
           Write-Host "✅ Firewall rules added"
           
-          Write-Host "📥 Installing Python dependencies for noVNC and websockify..."
+          Write-Host "🔥 Installing Python dependencies for noVNC and websockify..."
           Write-Host "🔍 Checking Python and pip versions..."
           python --version | Write-Host
           python -m pip --version | Write-Host
@@ -123,12 +123,12 @@ jobs:
               dir $novncPath -Recurse | Write-Host
               if (-not (Test-Path "$novncPath/vnc.html")) {
                 Write-Host "❌ noVNC directory is incomplete, vnc.html not found"
-                Write-Host "🔄 Falling back to GitHub download..."
+                Write-Host "📄 Falling back to GitHub download..."
                 $novncVersion = "v1.6.0"
                 $maxDownloadAttempts = 5
                 for ($i = 1; $i -le $maxDownloadAttempts; $i++) {
                   try {
-                    Write-Host "📥 Downloading noVNC release $novncVersion (attempt $i/$maxDownloadAttempts)..."
+                    Write-Host "🔥 Downloading noVNC release $novncVersion (attempt $i/$maxDownloadAttempts)..."
                     Remove-Item -Recurse -Force noVNC -ErrorAction SilentlyContinue
                     $novncUrl = "https://github.com/novnc/noVNC/archive/refs/tags/$novncVersion.zip"
                     Invoke-WebRequest -Uri $novncUrl -OutFile "novnc.zip" -TimeoutSec 60
@@ -151,26 +151,26 @@ jobs:
             Write-Host "⚠️ Failed to check noVNC via pip: $_"
           }
           
-          Write-Host "📥 Installing Cloudflared..."
+          Write-Host "🔥 Installing Cloudflared..."
           Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe" -TimeoutSec 60
           Write-Host "✅ Cloudflared downloaded"
           
           Write-Host "🚀 Starting websockify..."
-          Start-Process -FilePath "python" -ArgumentList "-m", "websockify", "6080", "127.0.0.1:5900", "--web", "noVNC" -WindowStyle Hidden  # Sử dụng fallback path nếu cần
+          Start-Process -FilePath "python" -ArgumentList "-m", "websockify", "6080", "127.0.0.1:5900", "--web", "noVNC" -WindowStyle Hidden
           Start-Sleep -Seconds 15
           
-          Write-Host "🌐 Starting Cloudflared tunnel..."
+          Write-Host "🌍 Starting Cloudflared tunnel..."
           Start-Process -FilePath "cloudflared.exe" -ArgumentList "tunnel", "--url", "http://localhost:6080", "--no-autoupdate" -WindowStyle Hidden -RedirectStandardOutput "cloudflared.log"
           Start-Sleep -Seconds 40
           
-          Write-Host "🌐 Retrieving Cloudflared URL..."
+          Write-Host "🌍 Retrieving Cloudflared URL..."
           $maxAttempts = 180
           $attempt = 0
           $cloudflaredUrl = ""
           
           do {
             $attempt++
-            Write-Host "🔄 Checking Cloudflared URL (attempt $attempt/$maxAttempts)"
+            Write-Host "📄 Checking Cloudflared URL (attempt $attempt/$maxAttempts)"
             Start-Sleep -Seconds 3
             
             $logContent = Get-Content "cloudflared.log" -Raw -ErrorAction SilentlyContinue
@@ -202,7 +202,7 @@ jobs:
           # Trigger restart workflow
           try {
             $headers = @{
-              "Authorization" = "token ${env:GITHUB_TOKEN_VPS}"
+              "Authorization" = "token $env:GITHUB_TOKEN_VPS"
               "Accept" = "application/vnd.github.v3+json"
             }
             $payload = @{
