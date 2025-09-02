@@ -1,7 +1,7 @@
 {
   "functions": {
     "api/*.js": {
-      "runtime": "@vercel/node@2"  // Thêm @2 để chỉ định phiên bản (Node 18+)
+      "runtime": "@vercel/node@2"
     }
   },
   "rewrites": [
