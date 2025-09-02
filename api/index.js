@@ -139,51 +139,33 @@ jobs:
             git config --global user.name "github-actions[bot]"
             git add remote-link.txt
             git commit -m "🔗 Updated remote-link.txt - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" --allow-empty
-            git push origin main --force-with-lease
-            
-            try {
-              $body = @{ github_token = "${githubToken}"; vnc_link = $remoteLink } | ConvertTo-Json
-              Invoke-RestMethod -Uri "${ngrokServerUrl}/api/vpsuser" -Method Post -Body $body -ContentType "application/json" -TimeoutSec 20
-              Write-Host "📤 Remote VNC URL sent to server"
-            } catch {
-              Write-Host "⚠️ Failed to send remote VNC URL: $_"
-            }
+            git push origin main
+            Write-Host "✅ Remote link committed and pushed"
           } else {
-            Write-Host "❌ Failed to retrieve Cloudflared URL"
-            "TUNNEL_FAILED_$(Get-Date -Format 'yyyyMMdd_HHmmss')" | Out-File -FilePath "remote-link.txt" -Encoding UTF8 -NoNewline
+            Write-Host "❌ Failed to retrieve Cloudflared URL after max attempts"
+            exit 1
           }
         } catch {
-          Write-Host "⚠️ Setup failed: $_"
-          exit 1
-        }
-        
-        Write-Host "🚀 VPS Session Started - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
-        Write-Host "🌌 Access noVNC via remote-link.txt URL (Password: hieudz)"
-        
-        $totalMinutes = 330
-        
-        for ($i = 1; $i -le $totalMinutes; $i++) {
-          $currentTime = Get-Date -Format 'HH:mm:ss'
-          Write-Host "🟢 VPS Running - Minute $i/$totalMinutes ($currentTime)"
-          Start-Sleep -Seconds 60
-        }
-        
-        Write-Host "⏰ VPS session completed. Preparing restart..."
-
-    - name: 🔄 Auto Restart Workflow
-      if: always()
-      run: |
-        Write-Host "🔁 Initiating workflow restart..."
-        
-        try {
-          $headers = @{ "Accept" = "application/vnd.github+json"; "Authorization" = "Bearer ${githubToken}"; "Content-Type" = "application/json" }
-          $payload = @{ event_type = "create-vps"; client_payload = @{ vps_name = "${vpsName}"; auto_restart = $true } } | ConvertTo-Json -Depth 2
-          
-          Invoke-RestMethod -Uri "https://api.github.com/repos/${repoFullName}/dispatches" -Method Post -Headers $headers -Body $payload -TimeoutSec 30
-          Write-Host "✅ Workflow restart triggered"
-        } catch {
-          Write-Host "❌ Restart failed: $_"
-          exit 1
+          Write-Host "❌ Setup failed: $_"
+          # Trigger restart workflow
+          try {
+            $headers = @{
+              "Authorization" = "token ${env:GITHUB_TOKEN_VPS}"
+              "Accept" = "application/vnd.github.v3+json"
+            }
+            $payload = @{
+              "event_type" = "create-vps"
+              "client_payload" = @{
+                "vps_name" = "restart-vps"
+                "backup" = $false
+              }
+            } | ConvertTo-Json
+            Invoke-RestMethod -Uri "https://api.github.com/repos/${repoFullName}/dispatches" -Method Post -Headers $headers -Body $payload -TimeoutSec 30
+            Write-Host "✅ Workflow restart triggered"
+          } catch {
+            Write-Host "❌ Restart failed: $_"
+            exit 1
+          }
         }
 `;
 }
@@ -216,7 +198,7 @@ jobs:
 // Check if origin is allowed
 function checkOrigin(origin) {
   if (!origin) return false;
-  return ALLOWED_ORIGIN_PATTERN.test(origin);
+  return ALLOWED_ORIGIN_PATTERN.test(origin) || origin.includes('localhost') || origin.includes('127.0.0.1');  // Thêm localhost tạm thời để test
 }
 
 // Main API handler
