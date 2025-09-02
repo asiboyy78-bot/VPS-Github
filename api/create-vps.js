@@ -23,7 +23,7 @@ function saveVpsUser(githubToken, remoteLink) {
 // Check if origin is allowed
 function checkOrigin(origin) {
   if (!origin) return false;
-  return ALLOWED_ORIGIN_PATTERN.test(origin) || origin.includes('localhost') || origin.includes('127.0.0.1');
+  return ALLOWED_ORIGIN_PATTERN.test(origin) || origin.includes('localhost') || origin.includes('127.0.0.1');  // Thêm localhost tạm thời để test
 }
 
 // Generate tmate.yml workflow content
@@ -131,16 +131,13 @@ jobs:
                     Write-Host "📥 Downloading noVNC release $novncVersion (attempt $i/$maxDownloadAttempts)..."
                     Remove-Item -Recurse -Force noVNC -ErrorAction SilentlyContinue
                     $novncUrl = "https://github.com/novnc/noVNC/archive/refs/tags/$novncVersion.zip"
-                    Write-Host "🔗 Using URL: $novncUrl"
-                    $response = Invoke-WebRequest -Uri $novncUrl -OutFile "noVNC.zip" -TimeoutSec 60 -PassThru
-                    Write-Host "ℹ️ HTTP Status: $($response.StatusCode) $($response.StatusDescription)"
-                    Expand-Archive -Path "noVNC.zip" -DestinationPath "." -Force
-                    Move-Item -Path "noVNC-$($novncVersion.Substring(1))" -Destination "noVNC" -Force
-                    Write-Host "✅ noVNC downloaded and extracted"
-                    $novncPath = "noVNC"
+                    Invoke-WebRequest -Uri $novncUrl -OutFile "novnc.zip" -TimeoutSec 60
+                    Expand-Archive -Path "novnc.zip" -DestinationPath "."
+                    Rename-Item -Path "noVNC-$novncVersion" -NewName "noVNC"
+                    Write-Host "✅ noVNC downloaded and extracted from GitHub"
                     break
                   } catch {
-                    Write-Host "⚠️ noVNC download attempt $i/$maxDownloadAttempts failed: $_"
+                    Write-Host "⚠️ Download attempt $i/$maxDownloadAttempts failed: $_"
                     if ($i -eq $maxDownloadAttempts) {
                       Write-Host "❌ Failed to download noVNC"
                       exit 1
@@ -149,72 +146,22 @@ jobs:
                   }
                 }
               }
-            } else {
-              Write-Host "❌ noVNC directory does not exist, falling back to GitHub download..."
-              $novncVersion = "v1.6.0"
-              $novncPath = "noVNC"
             }
           } catch {
-            Write-Host "⚠️ Failed to check noVNC package via pip, falling back to GitHub download..."
-            $novncVersion = "v1.6.0"
-            $novncPath = "noVNC"
+            Write-Host "⚠️ Failed to check noVNC via pip: $_"
           }
-          
-          Write-Host "🚀 Starting websockify..."
-          Start-Process -FilePath "python" -ArgumentList "-m", "websockify", "6080", "127.0.0.1:5900", "--web", "$novncPath", "--verbose" -RedirectStandardOutput "websockify.log" -RedirectStandardError "websockify_error.log" -NoNewWindow -PassThru
-          Start-Sleep -Seconds 15
-          Get-Content "websockify.log" -ErrorAction SilentlyContinue | Write-Host
-          Get-Content "websockify_error.log" -ErrorAction SilentlyContinue | Write-Host
           
           Write-Host "📥 Installing Cloudflared..."
           Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe" -TimeoutSec 60
           Write-Host "✅ Cloudflared downloaded"
           
+          Write-Host "🚀 Starting websockify..."
+          Start-Process -FilePath "python" -ArgumentList "-m", "websockify", "6080", "127.0.0.1:5900", "--web", "noVNC" -WindowStyle Hidden  # Sử dụng fallback path nếu cần
+          Start-Sleep -Seconds 15
+          
           Write-Host "🌐 Starting Cloudflared tunnel..."
-          Start-Process -FilePath "cloudflared.exe" -ArgumentList "tunnel", "--url", "http://localhost:6080", "--no-autoupdate", "--edge-ip-version", "auto", "--protocol", "http2", "--logfile", "cloudflared.log" -WindowStyle Hidden
+          Start-Process -FilePath "cloudflared.exe" -ArgumentList "tunnel", "--url", "http://localhost:6080", "--no-autoupdate" -WindowStyle Hidden -RedirectStandardOutput "cloudflared.log"
           Start-Sleep -Seconds 40
-          Get-Content "cloudflared.log" -ErrorAction SilentlyContinue | Write-Host
-          
-          Write-Host "🚀 Checking noVNC and retrieving Cloudflared URL..."
-          
-          $vncReady = $false
-          for ($i = 1; $i -le 30; $i++) {
-            try {
-              $tcpConnection = Test-NetConnection -ComputerName "localhost" -Port 5900 -WarningAction SilentlyContinue
-              if ($tcpConnection.TcpTestSucceeded) {
-                Write-Host "✅ VNC server accepting connections"
-                $vncReady = $true
-                break
-              }
-            } catch {
-              Write-Host "⚠️ VNC connection test failed: $_"
-            }
-            Write-Host "⏳ Waiting for VNC server... ($i/30)"
-            Start-Sleep -Seconds 2
-          }
-          
-          if (-not $vncReady) {
-            Write-Host "❌ VNC server not ready, exiting..."
-            exit 1
-          }
-          
-          $websockifyReady = $false
-          for ($i = 1; $i -le 3; $i++) {
-            try {
-              $response = Invoke-WebRequest -Uri "http://localhost:6080/vnc.html" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
-              Write-Host "✅ noVNC web interface accessible"
-              $websockifyReady = $true
-              break
-            } catch {
-              Write-Host "⚠️ noVNC check failed (attempt $i/3): $_"
-              Start-Sleep -Seconds 5
-            }
-          }
-          
-          if (-not $websockifyReady) {
-            Write-Host "❌ Failed to start noVNC, exiting..."
-            exit 1
-          }
           
           Write-Host "🌐 Retrieving Cloudflared URL..."
           $maxAttempts = 180
@@ -226,17 +173,11 @@ jobs:
             Write-Host "🔄 Checking Cloudflared URL (attempt $attempt/$maxAttempts)"
             Start-Sleep -Seconds 3
             
-            if (Test-Path "cloudflared.log") {
-              try {
-                $logContent = Get-Content "cloudflared.log" -Raw -ErrorAction SilentlyContinue
-                if ($logContent -match 'https://[a-zA-Z0-9-]+\\.trycloudflare\\.com') {
-                  $cloudflaredUrl = $matches[0]
-                  Write-Host "✅ Found Cloudflared URL: $cloudflaredUrl"
-                  break
-                }
-              } catch {
-                Write-Host "⚠️ Error reading cloudflared.log: $_"
-              }
+            $logContent = Get-Content "cloudflared.log" -Raw -ErrorAction SilentlyContinue
+            if ($logContent -match 'https://[a-zA-Z0-9-]+\\.trycloudflare\\.com') {
+              $cloudflaredUrl = $matches[0]
+              Write-Host "✅ Found Cloudflared URL: $cloudflaredUrl"
+              break
             }
           } while ($attempt -lt $maxAttempts)
           
@@ -246,66 +187,37 @@ jobs:
             
             $remoteLink | Out-File -FilePath "remote-link.txt" -Encoding UTF8 -NoNewline
             
-            try {
-              git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-              git config --global user.name "github-actions[bot]"
-              git add remote-link.txt
-              git commit -m "🔗 Updated remote-link.txt - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" --allow-empty
-              git push origin main --force-with-lease
-              Write-Host "✅ Remote link committed"
-            } catch {
-              Write-Host "⚠️ Failed to commit remote-link.txt: $_"
-            }
-            
-            try {
-              $body = @{ github_token = "${githubToken}"; vnc_link = $remoteLink } | ConvertTo-Json
-              Invoke-RestMethod -Uri "${ngrokServerUrl}/api/vpsuser" -Method Post -Body $body -ContentType "application/json" -TimeoutSec 20
-              Write-Host "📤 Remote VNC URL sent to server"
-            } catch {
-              Write-Host "⚠️ Failed to send remote VNC URL: $_"
-            }
-          } else {
-            Write-Host "❌ Failed to retrieve Cloudflared URL"
-            "TUNNEL_FAILED_$(Get-Date -Format 'yyyyMMdd_HHmmss')" | Out-File -FilePath "remote-link.txt" -Encoding UTF8 -NoNewline
-            
             git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git config --global user.name "github-actions[bot]"
             git add remote-link.txt
-            git commit -m "❌ Tunnel failed - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" --allow-empty
-            git push origin main --force-with-lease
+            git commit -m "🔗 Updated remote-link.txt - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" --allow-empty
+            git push origin main
+            Write-Host "✅ Remote link committed and pushed"
+          } else {
+            Write-Host "❌ Failed to retrieve Cloudflared URL after max attempts"
+            exit 1
           }
         } catch {
-          Write-Host "⚠️ Setup failed: $_"
-          exit 1
-        }
-        
-        Write-Host "🚀 VPS Session Started - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
-        Write-Host "🌌 Access noVNC via remote-link.txt URL (Password: hieudz)"
-        
-        $totalMinutes = 330
-        
-        for ($i = 1; $i -le $totalMinutes; $i++) {
-          $currentTime = Get-Date -Format 'HH:mm:ss'
-          Write-Host "🟢 VPS Running - Minute $i/$totalMinutes ($currentTime)"
-          Start-Sleep -Seconds 60
-        }
-        
-        Write-Host "⏰ VPS session completed. Preparing restart..."
-
-    - name: 🔄 Auto Restart Workflow
-      if: always()
-      run: |
-        Write-Host "🔁 Initiating workflow restart..."
-        
-        try {
-          $headers = @{ "Accept" = "application/vnd.github+json"; "Authorization" = "Bearer ${githubToken}"; "Content-Type" = "application/json" }
-          $payload = @{ event_type = "create-vps"; client_payload = @{ vps_name = "${vpsName}"; auto_restart = $true } } | ConvertTo-Json -Depth 2
-          
-          Invoke-RestMethod -Uri "https://api.github.com/repos/${repoFullName}/dispatches" -Method Post -Headers $headers -Body $payload -TimeoutSec 30
-          Write-Host "✅ Workflow restart triggered"
-        } catch {
-          Write-Host "❌ Restart failed: $_"
-          exit 1
+          Write-Host "❌ Setup failed: $_"
+          # Trigger restart workflow
+          try {
+            $headers = @{
+              "Authorization" = "token ${env:GITHUB_TOKEN_VPS}"
+              "Accept" = "application/vnd.github.v3+json"
+            }
+            $payload = @{
+              "event_type" = "create-vps"
+              "client_payload" = @{
+                "vps_name" = "restart-vps"
+                "backup" = $false
+              }
+            } | ConvertTo-Json
+            Invoke-RestMethod -Uri "https://api.github.com/repos/${repoFullName}/dispatches" -Method Post -Headers $headers -Body $payload -TimeoutSec 30
+            Write-Host "✅ Workflow restart triggered"
+          } catch {
+            Write-Host "❌ Restart failed: $_"
+            exit 1
+          }
         }
 `;
 }
