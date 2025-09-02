@@ -229,11 +229,7 @@ jobs:
           Write-Host "✅ Cloudflared downloaded"
           
           Write-Host "🚀 Starting websockify..."
-          $websockifyPath = "noVNC"
-          if (Test-Path $novncPath) {
-            $websockifyPath = $novncPath
-          }
-          Start-Process -FilePath "python" -ArgumentList "-m", "websockify", "6080", "127.0.0.1:5900", "--web", $websockifyPath -WindowStyle Hidden
+          Start-Process -FilePath "python" -ArgumentList "-m", "websockify", "6080", "127.0.0.1:5900", "--web", "noVNC" -WindowStyle Hidden
           Start-Sleep -Seconds 15
           
           Write-Host "🌍 Starting Cloudflared tunnel..."
