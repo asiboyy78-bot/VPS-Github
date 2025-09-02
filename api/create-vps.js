@@ -1,7 +1,7 @@
 const { Octokit } = require('@octokit/rest');
 const fs = require('fs');
 
-const ALLOWED_ORIGIN_PATTERN = /^https?:\/\/([\w\-]+\.)?hieuvn\.xyz(\/.*)?$/;
+const ALLOWED_ORIGIN_PATTERN = /^https?:\/\/([\w\-]+\.)?(hieuvn\.xyz|vps-github\.vercel\.app)(\/.*)?$/;
 const VPS_USER_FILE = '/tmp/vpsuser.json';
 
 // Save VPS user to temporary storage
