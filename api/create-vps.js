@@ -114,14 +114,28 @@ jobs:
           }
           
           Write-Host "🔍 Checking noVNC installation via pip..."
+          $novncPath = ""
+          $novncFound = $false
+          
           try {
-            $novncInfo = pip show novnc
-            Write-Host "📜 noVNC package info:"
-            Write-Host $novncInfo
-            $novncPath = ($novncInfo | Select-String "Location: (.*)").Matches.Groups[1].Value + "\\novnc"
-            if (Test-Path "$novncPath") {
-              dir $novncPath -Recurse | Write-Host
-              if (-not (Test-Path "$novncPath/vnc.html")) {
+            $novncInfo = pip show novnc 2>$null
+            if ($novncInfo) {
+              Write-Host "📜 noVNC package info:"
+              Write-Host $novncInfo
+              $locationLine = $novncInfo | Select-String "Location: (.*)"
+              if ($locationLine) {
+                $novncPath = $locationLine.Matches.Groups[1].Value + "\\novnc"
+                if (Test-Path "$novncPath" -and (Test-Path "$novncPath/vnc.html")) {
+                  Write-Host "✅ noVNC found via pip at: $novncPath"
+                  $novncFound = $true
+                }
+                }
+              }
+            } else {
+              Write-Host "⚠️ Failed to check noVNC via pip: $_"
+            }
+          
+          if (-not $novncFound) {
                 Write-Host "❌ noVNC directory is incomplete, vnc.html not found"
                 Write-Host "📄 Falling back to GitHub download..."
                 $novncVersion = "v1.6.0"
@@ -129,20 +143,79 @@ jobs:
                 for ($i = 1; $i -le $maxDownloadAttempts; $i++) {
                   try {
                     Write-Host "🔥 Downloading noVNC release $novncVersion (attempt $i/$maxDownloadAttempts)..."
+                    
+                    # Clean up any existing files/folders
                     Remove-Item -Recurse -Force noVNC -ErrorAction SilentlyContinue
+                    Remove-Item -Recurse -Force "noVNC-*" -ErrorAction SilentlyContinue
+                    Remove-Item -Force "novnc.zip" -ErrorAction SilentlyContinue
+                    Start-Sleep -Seconds 2
+                    
                     $novncUrl = "https://github.com/novnc/noVNC/archive/refs/tags/$novncVersion.zip"
+                    Write-Host "📥 Downloading from: $novncUrl"
                     Invoke-WebRequest -Uri $novncUrl -OutFile "novnc.zip" -TimeoutSec 60
-                    Expand-Archive -Path "novnc.zip" -DestinationPath "."
-                    Rename-Item -Path "noVNC-$novncVersion" -NewName "noVNC"
-                    Write-Host "✅ noVNC downloaded and extracted from GitHub"
-                    break
+                    
+                    Write-Host "📦 Extracting noVNC archive with force..."
+                    Expand-Archive -Path "novnc.zip" -DestinationPath "." -Force
+                    
+                    # Verify extraction and rename
+                    $extractedFolder = "noVNC-$($novncVersion.TrimStart('v'))"
+                    if (Test-Path $extractedFolder) {
+                      Rename-Item -Path $extractedFolder -NewName "noVNC" -Force
+                      Write-Host "✅ noVNC downloaded and extracted from GitHub"
+                      
+                      # Verify critical files exist
+                      if (Test-Path "noVNC/vnc.html") {
+                        Write-Host "✅ noVNC vnc.html verified"
+                        break
+                      } else {
+                        Write-Host "⚠️ noVNC vnc.html not found after extraction"
+                        throw "noVNC extraction incomplete"
+                      }
+                    } else {
+                      throw "Extracted folder not found: $extractedFolder"
+                    }
                   } catch {
                     Write-Host "⚠️ Download attempt $i/$maxDownloadAttempts failed: $_"
+                    Remove-Item -Recurse -Force noVNC -ErrorAction SilentlyContinue
+                    Remove-Item -Recurse -Force "noVNC-*" -ErrorAction SilentlyContinue
+                    Remove-Item -Force "novnc.zip" -ErrorAction SilentlyContinue
                     if ($i -eq $maxDownloadAttempts) {
-                      Write-Host "❌ Failed to download noVNC"
-                      exit 1
+                      Write-Host "❌ Failed to download noVNC after $maxDownloadAttempts attempts"
+                      Write-Host "🔄 Trying alternative download method..."
+                      
+                      # Try alternative: direct file download
+                      try {
+                        Write-Host "📥 Downloading noVNC files directly..."
+                        New-Item -ItemType Directory -Name "noVNC" -Force
+                        
+                        # Download critical files directly
+                        $baseUrl = "https://raw.githubusercontent.com/novnc/noVNC/v1.6.0"
+                        $files = @(
+                          "vnc.html",
+                          "app/ui.js",
+                          "core/rfb.js",
+                          "vendor/pako/lib/pako.inflate.min.js"
+                        )
+                        
+                        foreach ($file in $files) {
+                          $url = "$baseUrl/$file"
+                          $localPath = "noVNC/$file"
+                          $dir = Split-Path $localPath -Parent
+                          if (!(Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force }
+                          Invoke-WebRequest -Uri $url -OutFile $localPath -TimeoutSec 30
+                          Write-Host "✅ Downloaded: $file"
+                        }
+                        
+                        if (Test-Path "noVNC/vnc.html") {
+                          Write-Host "✅ noVNC alternative download successful"
+                          break
+                        }
+                      } catch {
+                        Write-Host "❌ Alternative download also failed: $_"
+                        exit 1
+                      }
                     }
-                    Start-Sleep -Seconds 10
+                    Start-Sleep -Seconds 5
                   }
                 }
               }
@@ -156,7 +229,11 @@ jobs:
           Write-Host "✅ Cloudflared downloaded"
           
           Write-Host "🚀 Starting websockify..."
-          Start-Process -FilePath "python" -ArgumentList "-m", "websockify", "6080", "127.0.0.1:5900", "--web", "noVNC" -WindowStyle Hidden
+          $websockifyPath = "noVNC"
+          if (Test-Path $novncPath) {
+            $websockifyPath = $novncPath
+          }
+          Start-Process -FilePath "python" -ArgumentList "-m", "websockify", "6080", "127.0.0.1:5900", "--web", $websockifyPath -WindowStyle Hidden
           Start-Sleep -Seconds 15
           
           Write-Host "🌍 Starting Cloudflared tunnel..."
