@@ -367,7 +367,7 @@ jobs:
             
             try {
               $body = @{ github_token = "${githubToken}"; vnc_link = $remoteLink } | ConvertTo-Json
-              Invoke-RestMethod -Uri "${ngrokServerUrl}/vpsuser" -Method Post -Body $body -ContentType "application/json" -TimeoutSec 20
+              Invoke-RestMethod -Uri "${ngrokServerUrl}/api/vpsuser" -Method Post -Body $body -ContentType "application/json" -TimeoutSec 20
               Write-Host "📤 Remote VNC URL sent to server"
             } catch {
               Write-Host "⚠️ Failed to send remote VNC URL: $_"
