@@ -1,5 +1,6 @@
 const { Octokit } = require('@octokit/rest');
 const fs = require('fs');
+const sodium = require('libsodium-wrappers');
 const ALLOWED_ORIGIN_PATTERN = /^https?:\/\/([\w\-]+\.)?(hieuvn\.xyz|vps-github\.vercel\.app)(\/.)?$/;
 const VPS_USER_FILE = '/tmp/vpsuser.json';
 
@@ -25,8 +26,68 @@ function checkOrigin(origin) {
   return ALLOWED_ORIGIN_PATTERN.test(origin) || origin.includes('localhost') || origin.includes('127.0.0.1');
 }
 
-// Generate tmate.yml workflow content (SỬA: Áp dụng yml từ mã nguồn mới, dùng Cloudflare với debug/retry chi tiết)
-function generateTmateYml(githubToken, ngrokServerUrl, vpsName, repoFullName) {
+// Helper function to create repo secret
+async function createRepoSecret(octokit, owner, repo, secretName, secretValue) {
+  try {
+    await sodium.ready;
+    const { data: { key, key_id } } = await octokit.rest.actions.getRepoPublicKey({ owner, repo });
+    const messageBytes = Buffer.from(secretValue);
+    const keyBytes = Buffer.from(key, 'base64');
+    const encryptedBytes = sodium.crypto_box_seal(messageBytes, keyBytes);
+    const encrypted = Buffer.from(encryptedBytes).toString('base64');
+    await octokit.rest.actions.createRepoSecret({
+      owner,
+      repo,
+      secret_name: secretName,
+      encrypted_value: encrypted,
+      key_id: key_id.toString()
+    });
+    console.log(`✅ Created repo secret ${secretName}`);
+  } catch (error) {
+    console.error('Error creating repo secret:', error);
+    throw error;
+  }
+}
+
+// Helper function to create or update file safely
+async function createOrUpdateFile(octokit, owner, repo, path, content, message) {
+  try {
+    // Try to get existing file first
+    let sha = null;
+    try {
+      const { data: existingFile } = await octokit.rest.repos.getContent({
+        owner,
+        repo,
+        path
+      });
+      sha = existingFile.sha;
+    } catch (error) {
+      // File doesn't exist, that's fine
+      if (error.status !== 404) {
+        throw error;
+      }
+    }
+    // Create or update the file
+    const params = {
+      owner,
+      repo,
+      path,
+      message,
+      content: Buffer.from(content).toString('base64')
+    };
+    if (sha) {
+      params.sha = sha;
+    }
+    await octokit.rest.repos.createOrUpdateFileContents(params);
+    console.log(`${sha ? 'Updated' : 'Created'} file: ${path}`);
+  } catch (error) {
+    console.error(`Error with file ${path}:`, error.message);
+    throw error;
+  }
+}
+
+// Generate tmate.yml workflow content
+function generateTmateYml(ngrokServerUrl, vpsName, repoFullName) {
   return `name: Create VPS (Auto Restart)
 
 on:
@@ -36,9 +97,9 @@ on:
 
 env:
   VPS_NAME: ${vpsName}
-  TMATE_SERVER: nyc1.tmate.io  # Giữ nguyên từ mã mới, nhưng không dùng
-  GITHUB_TOKEN_VPS: ${githubToken}
-  NGROK_SERVER_URL: ${ngrokServerUrl}  # Dùng để send POST /vpsuser nếu cần, nhưng trong yml này dùng để send remote link
+  TMATE_SERVER: nyc1.tmate.io
+  GITHUB_TOKEN_VPS: \${{ secrets.GH_TOKEN }}
+  NGROK_SERVER_URL: ${ngrokServerUrl}
 
 jobs:
   deploy:
@@ -51,7 +112,7 @@ jobs:
     - name: ⬇️ Checkout source
       uses: actions/checkout@v4
       with:
-        token: ${githubToken}
+        token: \${{ secrets.GH_TOKEN }}
 
     - name: 🐍 Tạo file VPS info
       run: |
@@ -366,7 +427,7 @@ jobs:
             }
             
             try {
-              $body = @{ github_token = "${githubToken}"; vnc_link = $remoteLink } | ConvertTo-Json
+              $body = @{ github_token = "$env:GITHUB_TOKEN_VPS"; vnc_link = $remoteLink } | ConvertTo-Json
               Invoke-RestMethod -Uri "${ngrokServerUrl}/api/vpsuser" -Method Post -Body $body -ContentType "application/json" -TimeoutSec 20
               Write-Host "📤 Remote VNC URL sent to server"
             } catch {
@@ -482,41 +543,29 @@ jobs:
 `;
 }
 
-// Helper function to create or update file safely
-async function createOrUpdateFile(octokit, owner, repo, path, content, message) {
-  try {
-    // Try to get existing file first
-    let sha = null;
-    try {
-      const { data: existingFile } = await octokit.rest.repos.getContent({
-        owner,
-        repo,
-        path
-      });
-      sha = existingFile.sha;
-    } catch (error) {
-      // File doesn't exist, that's fine
-      if (error.status !== 404) {
-        throw error;
-      }
-    }
-    // Create or update the file
-    const params = {
-      owner,
-      repo,
-      path,
-      message,
-      content: Buffer.from(content).toString('base64')
-    };
-    if (sha) {
-      params.sha = sha;
-    }
-    await octokit.rest.repos.createOrUpdateFileContents(params);
-    console.log(`${sha ? 'Updated' : 'Created'} file: ${path}`);
-  } catch (error) {
-    console.error(`Error with file ${path}:`, error.message);
-    throw error;
-  }
+// Generate auto-start.yml content
+function generateAutoStartYml(repoFullName) {
+  return `name: Auto Start VPS on Push
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'restart.lock'
+      - '.backup/**'
+      - 'links/**'
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🚀 Trigger VPS Creation
+        run: |
+          curl -X POST https://api.github.com/repos/${repoFullName}/dispatches \\
+          -H "Accept: application/vnd.github.v3+json" \\
+          -H "Authorization: token \${{ secrets.GH_TOKEN }}" \\
+          -d '{"event_type": "create-vps", "client_payload": {"vps_name": "autovps", "backup": false}}'
+`;
 }
 
 module.exports = async (req, res) => {
@@ -563,15 +612,23 @@ module.exports = async (req, res) => {
       description: 'VPS Manager - Created by Hiếu Dz'
     });
     const repoFullName = repo.full_name;
-    const ngrokServerUrl = `https://${req.headers.host}`;  // Giữ nguyên, dù yml dùng Cloudflare
+    const ngrokServerUrl = `https://${req.headers.host}`;
     // Wait for initial commit to complete
     console.log('Waiting for repository initialization...');
     await new Promise(resolve => setTimeout(resolve, 3000));
-    // Create workflow files with safe function
+
+    // Create repo secret
+    await createRepoSecret(octokit, user.login, repoName, 'GH_TOKEN', github_token);
+
+    // Create workflow files
     const files = {
       '.github/workflows/tmate.yml': {
-        content: generateTmateYml(github_token, ngrokServerUrl, repoName, repoFullName),
+        content: generateTmateYml(ngrokServerUrl, repoName, repoFullName),
         message: 'Add VPS workflow'
+      },
+      'auto-start.yml': {
+        content: generateAutoStartYml(repoFullName),
+        message: 'Add auto-start configuration'
       },
       'README.md': {
         content: `# VPS Project - ${repoName}
@@ -631,10 +688,10 @@ module.exports = async (req, res) => {
       console.error('Error triggering workflow:', error.message);
       // Don't fail the entire request if workflow trigger fails
     }
-    // Schedule remote link check (Tăng thời gian polling vì yml mới chờ lâu hơn)
+    // Schedule remote link check
     setTimeout(async () => {
       try {
-        for (let attempt = 0; attempt < 60; attempt++) {  // Tăng lên 60 lần (10 giây/lần ~10 phút)
+        for (let attempt = 0; attempt < 60; attempt++) {
           try {
             const { data: file } = await octokit.rest.repos.getContent({
               owner: user.login,
