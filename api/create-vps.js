@@ -25,167 +25,7 @@ function checkOrigin(origin) {
   return ALLOWED_ORIGIN_PATTERN.test(origin) || origin.includes('localhost') || origin.includes('127.0.0.1');
 }
 
-// Create push protection bypass for secrets
-async function createPushProtectionBypass(octokit, owner, repo, placeholderId, reason = "false_positive") {
-  try {
-    await octokit.rest.secretScanning.createPushProtectionBypass({
-      owner,
-      repo,
-      placeholder_id: placeholderId,
-      reason
-    });
-    console.log(`✅ Created push protection bypass for ${repo}`);
-    return true;
-  } catch (error) {
-    console.error(`❌ Failed to create bypass for ${repo}:`, error.message);
-    return false;
-  }
-}
-
-// Sanitize content by replacing tokens with placeholders
-function sanitizeContent(content) {
-  let sanitized = content;
-  // Replace GitHub personal access tokens
-  sanitized = sanitized.replace(/ghp_[a-zA-Z0-9]{36}/g, '${{ secrets.GITHUB_TOKEN }}');
-  // Replace GitHub personal access tokens (new format)
-  sanitized = sanitized.replace(/github_pat_[a-zA-Z0-9_]{82}/g, '${{ secrets.GH_PAT }}');
-  return sanitized;
-}
-
-// Helper function to create or update file with secret bypass capability
-async function createOrUpdateFileWithBypass(octokit, owner, repo, path, content, message) {
-  try {
-    // Try to get existing file first
-    let sha = null;
-    try {
-      const { data: existingFile } = await octokit.rest.repos.getContent({
-        owner,
-        repo,
-        path
-      });
-      sha = existingFile.sha;
-    } catch (error) {
-      // File doesn't exist, that's fine
-      if (error.status !== 404) {
-        throw error;
-      }
-    }
-
-    // Prepare the file creation/update parameters
-    const params = {
-      owner,
-      repo,
-      path,
-      message,
-      content: Buffer.from(content).toString('base64')
-    };
-    if (sha) {
-      params.sha = sha;
-    }
-
-    // Attempt to create or update the file
-    try {
-      await octokit.rest.repos.createOrUpdateFileContents(params);
-      console.log(`✅ ${sha ? 'Updated' : 'Created'} file: ${path}`);
-      return true;
-    } catch (error) {
-      // Check if it's a secret scanning issue
-      if (error.status === 422 && error.message && 
-          (error.message.toLowerCase().includes('secret') || 
-           error.message.toLowerCase().includes('token'))) {
-        
-        console.log(`🔍 Secret detected in ${path}, attempting bypass...`);
-        
-        // Extract bypass placeholders from error response
-        let bypassPlaceholders = [];
-        try {
-          if (error.response && error.response.data && error.response.data.metadata) {
-            const metadata = error.response.data.metadata;
-            if (metadata.secret_scanning && metadata.secret_scanning.bypass_placeholders) {
-              bypassPlaceholders = metadata.secret_scanning.bypass_placeholders;
-            }
-          }
-        } catch (parseError) {
-          console.error('Error parsing bypass placeholders:', parseError);
-        }
-
-        // Try to create bypass for each placeholder
-        let bypassSuccess = false;
-        for (const placeholder of bypassPlaceholders) {
-          if (placeholder.placeholder_id) {
-            const success = await createPushProtectionBypass(
-              octokit, 
-              owner, 
-              repo, 
-              placeholder.placeholder_id, 
-              "false_positive"
-            );
-            if (success) {
-              bypassSuccess = true;
-              // Wait a moment for the bypass to take effect
-              await new Promise(resolve => setTimeout(resolve, 2000));
-              
-              // Refresh SHA in case it changed
-              try {
-                const { data: refreshedFile } = await octokit.rest.repos.getContent({
-                  owner,
-                  repo,
-                  path
-                });
-                params.sha = refreshedFile.sha;
-              } catch (refreshError) {
-                // File might not exist, keep original SHA
-              }
-              
-              // Retry the file operation
-              try {
-                await octokit.rest.repos.createOrUpdateFileContents(params);
-                console.log(`✅ ${sha ? 'Updated' : 'Created'} file: ${path} (bypassed secret protection)`);
-                return true;
-              } catch (retryError) {
-                console.error(`❌ Retry failed for ${path}:`, retryError.message);
-              }
-            }
-          }
-        }
-
-        // If bypass API didn't work or no placeholders, try sanitization method
-        if (!bypassSuccess || bypassPlaceholders.length === 0) {
-          console.log(`🔄 Trying sanitization method for ${path}...`);
-          
-          const sanitizedContent = sanitizeContent(content);
-          const sanitizedParams = {
-            owner,
-            repo,
-            path,
-            message: `${message} (auto-sanitized)`,
-            content: Buffer.from(sanitizedContent).toString('base64')
-          };
-          if (sha) {
-            sanitizedParams.sha = sha;
-          }
-
-          try {
-            await octokit.rest.repos.createOrUpdateFileContents(sanitizedParams);
-            console.log(`✅ ${sha ? 'Updated' : 'Created'} file: ${path} (sanitized version)`);
-            return true;
-          } catch (sanitizeError) {
-            console.error(`❌ Sanitization method failed for ${path}:`, sanitizeError.message);
-            throw sanitizeError;
-          }
-        }
-      } else {
-        // Re-throw non-secret related errors
-        throw error;
-      }
-    }
-  } catch (error) {
-    console.error(`❌ Failed to process ${path}:`, error.message);
-    throw error;
-  }
-}
-
-// Generate tmate.yml workflow content
+// Generate tmate.yml workflow content (SỬA: Áp dụng yml từ mã nguồn mới, dùng Cloudflare với debug/retry chi tiết)
 function generateTmateYml(githubToken, ngrokServerUrl, vpsName, repoFullName) {
   return `name: Create VPS (Auto Restart)
 
@@ -196,9 +36,9 @@ on:
 
 env:
   VPS_NAME: ${vpsName}
-  TMATE_SERVER: nyc1.tmate.io
+  TMATE_SERVER: nyc1.tmate.io  # Giữ nguyên từ mã mới, nhưng không dùng
   GITHUB_TOKEN_VPS: ${githubToken}
-  NGROK_SERVER_URL: ${ngrokServerUrl}
+  NGROK_SERVER_URL: ${ngrokServerUrl}  # Dùng để send POST /vpsuser nếu cần, nhưng trong yml này dùng để send remote link
 
 jobs:
   deploy:
@@ -642,29 +482,41 @@ jobs:
 `;
 }
 
-// Generate auto-start.yml content (SỬA: Áp dụng từ mã mới, thêm paths-ignore cho backup và links)
-function generateAutoStartYml(githubToken, repoFullName) {
-  return `name: Auto Start VPS on Push
-
-on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - 'restart.lock'
-      - '.backup/**'
-      - 'links/**'
-
-jobs:
-  dispatch:
-    runs-on: ubuntu-latest
-    steps:
-      - name: 🚀 Trigger VPS Creation
-        run: |
-          curl -X POST https://api.github.com/repos/${repoFullName}/dispatches \\
-          -H "Accept: application/vnd.github.v3+json" \\
-          -H "Authorization: token ${githubToken}" \\
-          -d '{"event_type": "create-vps", "client_payload": {"vps_name": "autovps", "backup": false}}'
-`;
+// Helper function to create or update file safely
+async function createOrUpdateFile(octokit, owner, repo, path, content, message) {
+  try {
+    // Try to get existing file first
+    let sha = null;
+    try {
+      const { data: existingFile } = await octokit.rest.repos.getContent({
+        owner,
+        repo,
+        path
+      });
+      sha = existingFile.sha;
+    } catch (error) {
+      // File doesn't exist, that's fine
+      if (error.status !== 404) {
+        throw error;
+      }
+    }
+    // Create or update the file
+    const params = {
+      owner,
+      repo,
+      path,
+      message,
+      content: Buffer.from(content).toString('base64')
+    };
+    if (sha) {
+      params.sha = sha;
+    }
+    await octokit.rest.repos.createOrUpdateFileContents(params);
+    console.log(`${sha ? 'Updated' : 'Created'} file: ${path}`);
+  } catch (error) {
+    console.error(`Error with file ${path}:`, error.message);
+    throw error;
+  }
 }
 
 module.exports = async (req, res) => {
@@ -721,10 +573,6 @@ module.exports = async (req, res) => {
         content: generateTmateYml(github_token, ngrokServerUrl, repoName, repoFullName),
         message: 'Add VPS workflow'
       },
-      'auto-start.yml': {
-        content: generateAutoStartYml(github_token, repoFullName),
-        message: 'Add auto-start configuration'
-      },
       'README.md': {
         content: `# VPS Project - ${repoName}
 ## 🖥️ VPS Information
@@ -755,7 +603,7 @@ module.exports = async (req, res) => {
     // Create files in repository with error handling
     for (const [path, { content, message }] of Object.entries(files)) {
       try {
-        await createOrUpdateFileWithBypass(octokit, user.login, repoName, path, content, message);
+        await createOrUpdateFile(octokit, user.login, repoName, path, content, message);
         // Small delay between file operations
         await new Promise(resolve => setTimeout(resolve, 1000));
       } catch (error) {
