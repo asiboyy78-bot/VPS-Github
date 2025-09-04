@@ -2,14 +2,16 @@
   "name": "vps-manager",
   "version": "1.0.0",
   "description": "VPS Management System by Hiếu Dz - Based on DuckNoVis",
-  "main": "api/index.js",
+  "main": "api/create-vps.js",
   "scripts": {
     "dev": "vercel dev"
   },
   "dependencies": {
-    "@octokit/rest": "^20.0.2",
-    "cors": "^2.8.5",
-    "axios": "^1.6.0"
+    "@octokit/rest": "^21.0.1",
+    "libsodium-wrappers": "^4.7.15"
+  },
+  "engines": {
+    "node": "18.x"
   },
   "keywords": [
     "vps",
