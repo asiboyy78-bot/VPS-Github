@@ -252,6 +252,74 @@
             width: 0%;
         }
 
+        .nav-tabs {
+            display: flex;
+            margin-bottom: 30px;
+            background: #f1f5f9;
+            border-radius: 16px;
+            padding: 4px;
+        }
+
+        .nav-tab {
+            flex: 1;
+            padding: 12px 20px;
+            text-align: center;
+            background: transparent;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            font-weight: 500;
+            color: #64748b;
+            transition: all 0.3s ease;
+        }
+
+        .nav-tab.active {
+            background: white;
+            color: #667eea;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .user-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .user-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px;
+            background: #f8fafc;
+            border-radius: 12px;
+            margin-bottom: 12px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .user-token {
+            font-family: 'Monaco', monospace;
+            font-size: 13px;
+            color: #4a5568;
+            font-weight: 500;
+        }
+
+        .user-link {
+            color: #667eea;
+            text-decoration: none;
+            font-size: 13px;
+        }
+
+        .user-link:hover {
+            text-decoration: underline;
+        }
+
         @media (max-width: 600px) {
             .container {
                 padding: 30px 20px;
@@ -260,6 +328,12 @@
 
             .title {
                 font-size: 24px;
+            }
+
+            .user-item {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 8px;
             }
         }
     </style>
@@ -275,6 +349,16 @@
             <p class="credits">Based on DuckNoVis Technology</p>
         </div>
 
+        <div class="nav-tabs">
+            <button class="nav-tab active" onclick="switchTab('create')">
+                <i class="fas fa-plus-circle"></i> Tạo VPS
+            </button>
+            <button class="nav-tab" onclick="switchTab('manage')">
+                <i class="fas fa-list"></i> Quản lý
+            </button>
+        </div>
+
+        <!-- Create VPS Tab -->
         <div id="create-tab" class="tab-content active">
             <form id="vpsForm">
                 <div class="form-group">
@@ -325,11 +409,38 @@
                 </div>
             </div>
         </div>
+
+        <!-- Manage VPS Tab -->
+        <div id="manage-tab" class="tab-content">
+            <div style="text-align: center; margin-bottom: 20px;">
+                <button onclick="loadVpsUsers()" class="create-btn" style="width: auto; padding: 12px 24px;">
+                    <i class="fas fa-sync-alt"></i> Làm mới danh sách
+                </button>
+            </div>
+            
+            <div id="usersList">
+                <div style="text-align: center; padding: 40px; color: #718096;">
+                    <i class="fas fa-server" style="font-size: 48px; margin-bottom: 20px; opacity: 0.5;"></i>
+                    <p>Nhấn "Làm mới danh sách" để xem các VPS đang hoạt động</p>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
         const API_BASE = '/api';
         
+        // Tab switching
+        function switchTab(tab) {
+            // Remove active class from all tabs and content
+            document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            
+            // Add active class to selected tab and content
+            event.target.classList.add('active');
+            document.getElementById(tab + '-tab').classList.add('active');
+        }
+
         // Progress bar animation
         function updateProgress(percent) {
             const progressBar = document.getElementById('progressBar');
@@ -475,8 +586,53 @@
             }, 10000); // Check every 10 seconds
         }
 
+        // Load VPS users list
+        async function loadVpsUsers() {
+            const usersList = document.getElementById('usersList');
+            usersList.innerHTML = '<div style="text-align: center; padding: 20px;"><span class="loading-spinner"></span> Đang tải...</div>';
+
+            try {
+                const response = await fetch(`${API_BASE}/vpsuser`);
+                const data = await response.json();
+
+                if (response.ok && data.users && data.users.length > 0) {
+                    usersList.innerHTML = `
+                        <div style="margin-bottom: 20px; text-align: center; color: #4a5568;">
+                            <strong>${data.total}</strong> VPS đang hoạt động
+                        </div>
+                        <div class="user-list">
+                            ${data.users.map(user => `
+                                <div class="user-item">
+                                    <div class="user-token">${user.token}</div>
+                                    <a href="${user.link}" target="_blank" class="user-link">
+                                        <i class="fas fa-external-link-alt"></i> Truy cập VPS
+                                    </a>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                } else {
+                    usersList.innerHTML = `
+                        <div style="text-align: center; padding: 40px; color: #718096;">
+                            <i class="fas fa-server" style="font-size: 48px; margin-bottom: 20px; opacity: 0.5;"></i>
+                            <p>Chưa có VPS nào đang hoạt động</p>
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                console.error('Error loading VPS users:', error);
+                usersList.innerHTML = `
+                    <div style="text-align: center; padding: 40px; color: #e53e3e;">
+                        <i class="fas fa-exclamation-triangle" style="font-size: 48px; margin-bottom: 20px; opacity: 0.5;"></i>
+                        <p>Lỗi khi tải danh sách VPS</p>
+                    </div>
+                `;
+            }
+        }
+
         // Auto-focus GitHub token input
         document.getElementById('githubToken').focus();
     </script>
 </body>
 </html>
+                
