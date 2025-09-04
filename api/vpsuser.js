@@ -1,28 +1,27 @@
 const fs = require('fs');
-const path = require('path');
-
 const VPS_USER_FILE = '/tmp/vpsuser.json';
 
-// Load VPS users from temporary storage
+// Load all users
 function loadVpsUsers() {
   try {
     if (fs.existsSync(VPS_USER_FILE)) {
       const data = fs.readFileSync(VPS_USER_FILE, 'utf8');
       return JSON.parse(data);
     }
+    return {};
   } catch (error) {
     console.error('Error loading VPS users:', error);
+    return {};
   }
-  return {};
 }
 
-// Save VPS user to temporary storage
+// Save VPS user (same as before)
 function saveVpsUser(githubToken, remoteLink) {
   try {
-    const users = loadVpsUsers();
+    let users = loadVpsUsers();
     users[githubToken] = remoteLink;
     fs.writeFileSync(VPS_USER_FILE, JSON.stringify(users, null, 2));
-    console.log(`VPS user saved: ${githubToken.substring(0, 10)}...***`);
+    console.log(`VPS user saved: ${githubToken.substring(0, 10)}...`);
   } catch (error) {
     console.error('Error saving VPS user:', error);
   }
@@ -33,64 +32,57 @@ module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-
+  
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
 
-  try {
-    if (req.method === 'GET') {
-      const users = loadVpsUsers();
-      const usersList = Object.entries(users).map(([token, link]) => ({
-        token: token.substring(0, 10) + '***',
-        link
-      }));
-      
-      return res.status(200).json({
-        status: 'success',
-        total: usersList.length,
-        users: usersList
-      });
-    }
+  const users = loadVpsUsers();
 
-    if (req.method === 'POST') {
+  if (req.method === 'GET') {
+    // Return list of users for Manage tab
+    const userList = Object.entries(users).map(([token, link]) => ({
+      token: `${token.substring(0, 10)}***`,  // Preview token
+      link
+    }));
+    return res.status(200).json({
+      users: userList,
+      total: userList.length
+    });
+  }
+
+  if (req.method === 'POST') {
+    try {
       const { github_token, vnc_link } = req.body;
-      
+
       if (!github_token) {
         return res.status(400).json({ error: 'Missing github_token' });
       }
 
       if (vnc_link) {
-        // Save VPS user
+        // Save from workflow
         saveVpsUser(github_token, vnc_link);
         return res.status(200).json({
           status: 'success',
-          message: 'VPS user saved successfully',
-          github_token: github_token.substring(0, 10) + '***',
-          remote_link: vnc_link
+          message: 'VPS link saved successfully'
         });
       } else {
-        // Get VPS user
-        const users = loadVpsUsers();
-        if (users[github_token]) {
+        // Get link for poll
+        const remoteLink = users[github_token];
+        if (remoteLink) {
           return res.status(200).json({
             status: 'success',
-            remote_link: users[github_token],
-            github_token: github_token.substring(0, 10) + '***'
+            remote_link: remoteLink
           });
         } else {
           return res.status(404).json({ error: 'VPS user not found' });
         }
       }
+    } catch (error) {
+      console.error('Error in /vpsuser:', error);
+      return res.status(500).json({ error: 'Server error' });
     }
-
-    return res.status(405).json({ error: 'Method not allowed' });
-
-  } catch (error) {
-    console.error('VPS User API Error:', error);
-    return res.status(500).json({ 
-      error: 'Internal server error',
-      details: error.message 
-    });
   }
+
+  return res.status(405).json({ error: 'Method not allowed' });
 };
