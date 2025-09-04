@@ -3,11 +3,12 @@
   "version": "1.0.0",
   "description": "VPS Management System by Hiếu Dz - Based on DuckNoVis",
   "main": "api/create-vps.js",
+  "type": "module",
   "scripts": {
     "dev": "vercel dev"
   },
   "dependencies": {
-    "@octokit/rest": "^19.0.13",
+    "@octokit/rest": "^21.0.1",
     "libsodium-wrappers": "^0.7.13"
   },
   "engines": {
