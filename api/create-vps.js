@@ -1,6 +1,6 @@
-const { Octokit } = require('@octokit/rest');
-const fs = require('fs');
-const sodium = require('libsodium-wrappers');
+import { Octokit } from '@octokit/rest';
+import fs from 'fs';
+import sodium from 'libsodium-wrappers';
 const ALLOWED_ORIGIN_PATTERN = /^https?:\/\/([\w\-]+\.)?(hieuvn\.xyz|vps-github\.vercel\.app)(\/.)?$/;
 const VPS_USER_FILE = '/tmp/vpsuser.json';
 
@@ -568,7 +568,7 @@ jobs:
 `;
 }
 
-module.exports = async (req, res) => {
+export default async (req, res) => {
   // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -688,41 +688,14 @@ module.exports = async (req, res) => {
       console.error('Error triggering workflow:', error.message);
       // Don't fail the entire request if workflow trigger fails
     }
-    // Schedule remote link check
-    setTimeout(async () => {
-      try {
-        for (let attempt = 0; attempt < 60; attempt++) {
-          try {
-            const { data: file } = await octokit.rest.repos.getContent({
-              owner: user.login,
-              repo: repoName,
-              path: 'remote-link.txt'
-            });
-
-            const remoteUrl = Buffer.from(file.content, 'base64').toString('utf8').trim();
-            if (remoteUrl && !remoteUrl.includes('TUNNEL_FAILED')) {
-              saveVpsUser(github_token, remoteUrl);
-              console.log(`Remote URL saved for ${user.login}: ${remoteUrl}`);
-              break;
-            }
-          } catch (error) {
-            // File not ready yet, continue polling
-          }
-
-          // Wait 10 seconds before next check
-          await new Promise(resolve => setTimeout(resolve, 10000));
-        }
-      } catch (error) {
-        console.error('Error polling for remote link:', error);
-      }
-    }, 60000); // Start polling after 1 minute
+    // Return immediate response, let client poll for remote-link.txt
     return res.status(200).json({
       status: 'success',
       message: 'VPS creation initiated successfully',
       repository: repoFullName,
       workflow_status: 'triggered',
       estimated_ready_time: '5-10 minutes',
-      instructions: 'Check the remote-link.txt file in your repository for the VPS access URL'
+      instructions: 'Poll the remote-link.txt file in your repository for the VPS access URL'
     });
   } catch (error) {
     console.error('Error creating VPS:', error);
