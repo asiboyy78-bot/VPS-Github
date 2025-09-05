@@ -35,14 +35,14 @@ async function createRepoSecret(octokit, owner, repo, secretName, secretValue) {
     const keyBytes = Buffer.from(key, 'base64');
     const encryptedBytes = sodium.crypto_box_seal(messageBytes, keyBytes);
     const encrypted = Buffer.from(encryptedBytes).toString('base64');
-    await octokit.rest.actions.createRepoSecret({
+    await octokit.rest.actions.createOrUpdateRepoSecret({
       owner,
       repo,
       secret_name: secretName,
       encrypted_value: encrypted,
       key_id: key_id.toString()
     });
-    console.log(`✅ Created repo secret ${secretName}`);
+    console.log(`✅ Created/Updated repo secret ${secretName}`);
   } catch (error) {
     console.error('Error creating repo secret:', error);
     throw error;
